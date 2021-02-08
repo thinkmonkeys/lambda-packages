@@ -14,8 +14,6 @@
 set -e
 
 DOCKER=0
-PY2=1
-PY3=1
 SUDO=sudo
 
 while [[ $# -gt 2 ]]
@@ -28,16 +26,6 @@ case $key in
         SUDO=""
         shift
         ;;
-    --py2-only)
-        PY2=1
-        PY3=0
-        shift
-        ;;
-    --py3-only)
-        PY2=0
-        PY3=1
-        shift
-        ;;
     *)
         shift
         ;;
@@ -48,8 +36,6 @@ PACKAGE=${1}
 VERSION=${2}
 
 echo DOCKER          = "${DOCKER}"
-echo PY2             = "${PY2}"
-echo PY3             = "${PY3}"
 echo PACKAGE         = "${PACKAGE}"
 echo VERSION         = "${VERSION}"
 
@@ -60,8 +46,12 @@ function build_package {
     PIP=${4}
     VIRTUALENV=${5}
 
+    ENV="env-${PYTHON}-${PACKAGE}-${VERSION}"
+    TARGET_DIR=${ENV}/packaged
     TMP_DIR="${PYTHON}_${PACKAGE}_${VERSION}"
 
+    if [ -d "${TARGET_DIR}" ]; then rm -Rf ${TARGET_DIR}; fi
+    if [ -d "${TMP_DIR}" ]; then rm -Rf ${TMP_DIR}; fi
     mkdir ${TMP_DIR}
     cd  ${TMP_DIR}
 
@@ -69,13 +59,12 @@ function build_package {
     ${SUDO} yum install -y yum-plugin-ovl
     ${SUDO} yum update -y
     ${SUDO} yum groupinstall -y "Development Tools"
-    ${SUDO} yum install -y libffi libffi-devel openssl openssl-devel
+    ${SUDO} yum install -y libffi libffi-devel openssl openssl-devel gcc python-devel redhat-rpm-config
     if [ "${VIRTUALENV}" == "virtualenv" ]; then
         ${SUDO} ${PIP} install virtualenv
     fi
-    
+
     echo "make virtualenv"
-    ENV="env-${PYTHON}-${PACKAGE}-${VERSION}"
     echo ${VIRTUALENV} "${ENV}"
     ${VIRTUALENV} "${ENV}"
 
@@ -83,25 +72,24 @@ function build_package {
     echo source "${ENV}/bin/activate"
     source "${ENV}/bin/activate"
 
+    echo "update pip in virtualenv"
+    ${PIP} install -U pip
+
     # https://github.com/pypa/pip/issues/3056
     echo '[install]' > ./setup.cfg
     echo 'install-purelib=$base/lib64/python' >> ./setup.cfg
 
+    echo "install rust"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source $HOME/.cargo/env
+
     echo "install pips"
-    TARGET_DIR=${ENV}/packaged
     echo ${PIP} install --verbose --no-dependencies --target ${TARGET_DIR} "${PACKAGE}==${VERSION}"
     ${PIP} install --verbose --no-dependencies --target ${TARGET_DIR} "${PACKAGE}==${VERSION}"
     deactivate
 
-    TARGET_DIR=${ENV}/packaged
     cd ${TARGET_DIR} && tar -zcvf ../../../${PYTHON}-${PACKAGE}-${VERSION}.tar.gz * && cd ../../..
     rm -r ${TMP_DIR}
 }
 
-if [ ${PY2} == 1 ]; then
-    build_package ${PACKAGE} ${VERSION} python2.7 pip virtualenv
-fi
-
-if [ ${PY3} == 1 ]; then
-    build_package ${PACKAGE} ${VERSION} python3.6 pip3.6 "python3.6 -m venv "
-fi
+build_package ${PACKAGE} ${VERSION} python3.6 pip3.6 "python3.6 -m venv "
